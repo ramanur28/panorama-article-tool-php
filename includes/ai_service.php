@@ -8,7 +8,7 @@ require_once __DIR__ . '/db.php';
 class AIService {
     public static function generateContent(array $params): array {
         $settings = self::getSettings();
-        $model = $params['model'] ?? $settings['model'] ?? 'gemini-2.5-flash';
+        $model = $params['model'] ?? $settings['model'] ?? 'gemini-3.5-flash';
         $isOpenAI = strpos($model, 'gpt-') === 0 || strpos($model, 'o1-') === 0 || strpos($model, 'o3-') === 0;
 
         if ($isOpenAI) {
@@ -27,7 +27,7 @@ class AIService {
         } catch (Exception $e) {}
 
         return [
-            'model' => 'gemini-2.5-flash',
+            'model' => 'gemini-3.5-flash',
             'tone' => 'Professional',
             'custom_prompt' => '',
             'target_audience' => '',
@@ -71,50 +71,76 @@ class AIService {
 
         $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_POSTFIELDS => json_encode($reqBody),
-            CURLOPT_TIMEOUT => 180,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => true
-        ]);
+        $maxAttempts = 3;
+        $lastError = null;
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr = curl_error($ch);
-        if (PHP_VERSION_ID < 80000) { @curl_close($ch); }
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                CURLOPT_POSTFIELDS => json_encode($reqBody),
+                CURLOPT_TIMEOUT => 240,
+                CURLOPT_CONNECTTIMEOUT => 30,
+                CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                CURLOPT_TCP_KEEPALIVE => 1,
+                CURLOPT_TCP_KEEPIDLE => 60,
+                CURLOPT_SSL_VERIFYPEER => true
+            ]);
 
-        if ($curlErr) {
-            throw new Exception("Gemini API Network Error: {$curlErr}");
-        }
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr = curl_error($ch);
+            if (PHP_VERSION_ID < 80000) { @curl_close($ch); }
 
-        $json = json_decode($response, true);
-        if ($httpCode !== 200 || !empty($json['error'])) {
-            $errMsg = $json['error']['message'] ?? "Gemini API returned HTTP {$httpCode}";
-            throw new Exception($errMsg);
-        }
+            if (!empty($curlErr)) {
+                $lastError = "Gemini API Network Error: {$curlErr}";
+                if ($attempt < $maxAttempts) {
+                    usleep($attempt * 1500000); // 1.5s, 3s
+                    continue;
+                }
+                throw new Exception("{$lastError} (after {$maxAttempts} attempts)");
+            }
 
-        $text = '';
-        if (!empty($json['candidates'][0]['content']['parts'])) {
-            foreach ($json['candidates'][0]['content']['parts'] as $part) {
-                if (!empty($part['text'])) {
-                    $text .= $part['text'];
+            if (in_array($httpCode, [429, 500, 502, 503, 504], true)) {
+                $json = json_decode($response, true);
+                $errMsg = $json['error']['message'] ?? "Gemini API returned HTTP {$httpCode}";
+                $lastError = $errMsg;
+                if ($attempt < $maxAttempts) {
+                    usleep($attempt * 2000000); // 2s, 4s
+                    continue;
+                }
+                throw new Exception("Gemini API Error: {$lastError} (after {$maxAttempts} attempts)");
+            }
+
+            $json = json_decode($response, true);
+            if ($httpCode !== 200 || !empty($json['error'])) {
+                $errMsg = $json['error']['message'] ?? "Gemini API returned HTTP {$httpCode}";
+                throw new Exception($errMsg);
+            }
+
+            $text = '';
+            if (!empty($json['candidates'][0]['content']['parts'])) {
+                foreach ($json['candidates'][0]['content']['parts'] as $part) {
+                    if (!empty($part['text'])) {
+                        $text .= $part['text'];
+                    }
                 }
             }
+
+            $usage = $json['usageMetadata'] ?? [];
+            return [
+                'text' => $text,
+                'usageMetadata' => [
+                    'promptTokenCount' => $usage['promptTokenCount'] ?? 0,
+                    'candidatesTokenCount' => $usage['candidatesTokenCount'] ?? 0,
+                    'totalTokenCount' => $usage['totalTokenCount'] ?? 0
+                ]
+            ];
         }
 
-        $usage = $json['usageMetadata'] ?? [];
-        return [
-            'text' => $text,
-            'usageMetadata' => [
-                'promptTokenCount' => $usage['promptTokenCount'] ?? 0,
-                'candidatesTokenCount' => $usage['candidatesTokenCount'] ?? 0,
-                'totalTokenCount' => $usage['totalTokenCount'] ?? 0
-            ]
-        ];
+        throw new Exception($lastError ?: "Failed to generate content from Gemini.");
     }
 
     private static function callOpenAI(string $model, array $params, array $settings): array {
@@ -152,45 +178,71 @@ class AIService {
             $reqBody['temperature'] = 0.7;
         }
 
-        $ch = curl_init('https://api.openai.com/v1/chat/completions');
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $apiKey
-            ],
-            CURLOPT_POSTFIELDS => json_encode($reqBody),
-            CURLOPT_TIMEOUT => 180,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_SSL_VERIFYPEER => true
-        ]);
+        $maxAttempts = 3;
+        $lastError = null;
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlErr = curl_error($ch);
-        if (PHP_VERSION_ID < 80000) { @curl_close($ch); }
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $ch = curl_init('https://api.openai.com/v1/chat/completions');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_HTTPHEADER => [
+                    'Content-Type: application/json',
+                    'Authorization: Bearer ' . $apiKey
+                ],
+                CURLOPT_POSTFIELDS => json_encode($reqBody),
+                CURLOPT_TIMEOUT => 240,
+                CURLOPT_CONNECTTIMEOUT => 30,
+                CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
+                CURLOPT_TCP_KEEPALIVE => 1,
+                CURLOPT_TCP_KEEPIDLE => 60,
+                CURLOPT_SSL_VERIFYPEER => true
+            ]);
 
-        if ($curlErr) {
-            throw new Exception("OpenAI API Network Error: {$curlErr}");
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr = curl_error($ch);
+            if (PHP_VERSION_ID < 80000) { @curl_close($ch); }
+
+            if (!empty($curlErr)) {
+                $lastError = "OpenAI API Network Error: {$curlErr}";
+                if ($attempt < $maxAttempts) {
+                    usleep($attempt * 1500000); // 1.5s, 3s
+                    continue;
+                }
+                throw new Exception("{$lastError} (after {$maxAttempts} attempts)");
+            }
+
+            if (in_array($httpCode, [429, 500, 502, 503, 504], true)) {
+                $json = json_decode($response, true);
+                $errMsg = $json['error']['message'] ?? "OpenAI API returned HTTP {$httpCode}";
+                $lastError = $errMsg;
+                if ($attempt < $maxAttempts) {
+                    usleep($attempt * 2000000); // 2s, 4s
+                    continue;
+                }
+                throw new Exception("OpenAI API Error: {$lastError} (after {$maxAttempts} attempts)");
+            }
+
+            $json = json_decode($response, true);
+            if ($httpCode !== 200 || !empty($json['error'])) {
+                $errMsg = $json['error']['message'] ?? "OpenAI API returned HTTP {$httpCode}";
+                throw new Exception($errMsg);
+            }
+
+            $text = $json['choices'][0]['message']['content'] ?? '';
+            $usage = $json['usage'] ?? [];
+
+            return [
+                'text' => $text,
+                'usageMetadata' => [
+                    'promptTokenCount' => $usage['prompt_tokens'] ?? 0,
+                    'candidatesTokenCount' => $usage['completion_tokens'] ?? 0,
+                    'totalTokenCount' => $usage['total_tokens'] ?? 0
+                ]
+            ];
         }
 
-        $json = json_decode($response, true);
-        if ($httpCode !== 200 || !empty($json['error'])) {
-            $errMsg = $json['error']['message'] ?? "OpenAI API returned HTTP {$httpCode}";
-            throw new Exception($errMsg);
-        }
-
-        $text = $json['choices'][0]['message']['content'] ?? '';
-        $usage = $json['usage'] ?? [];
-
-        return [
-            'text' => $text,
-            'usageMetadata' => [
-                'promptTokenCount' => $usage['prompt_tokens'] ?? 0,
-                'candidatesTokenCount' => $usage['completion_tokens'] ?? 0,
-                'totalTokenCount' => $usage['total_tokens'] ?? 0
-            ]
-        ];
+        throw new Exception($lastError ?: "Failed to generate content from OpenAI.");
     }
 }

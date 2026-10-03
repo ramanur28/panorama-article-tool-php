@@ -9,8 +9,8 @@ class SSE {
     public static function init(): void {
         if (self::$initialized) return;
 
-        @set_time_limit(300);
-        @ini_set('max_execution_time', '300');
+        @set_time_limit(600);
+        @ini_set('max_execution_time', '600');
         @ini_set('display_errors', '0');
 
         if (function_exists('apache_setenv')) {

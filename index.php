@@ -336,11 +336,10 @@ try {
           <label for="modelSelect">Default Model</label>
           <select id="modelSelect">
             <option value="gemini-3.5-flash">Gemini 3.5 Flash (Fast)</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash (Latest)</option>
             <option value="gemini-3.5-pro">Gemini 3.5 Pro (Quality)</option>
             <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
             <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
             <option value="custom">Other / Custom Model ID...</option>
           </select>
         </div>

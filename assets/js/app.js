@@ -124,7 +124,7 @@ async function authFetch(url, options = {}) {
 const state = {
   apiKey: localStorage.getItem("af-api-key") || "",
   openaiApiKey: localStorage.getItem("af-openai-key") || "",
-  model: localStorage.getItem("af-model") || "gemini-2.5-flash",
+  model: localStorage.getItem("af-model") || "gemini-3.5-flash",
   theme: localStorage.getItem("af-theme") || "light",
   targetAudience: localStorage.getItem("af-audience") || "",
   brand: localStorage.getItem("af-brand") || "",
@@ -779,7 +779,14 @@ function init() {
 
   if (dom.apiKeyInput) dom.apiKeyInput.value = state.apiKey;
   if (dom.openaiKeyInput) dom.openaiKeyInput.value = state.openaiApiKey;
-  if (dom.modelSelect) dom.modelSelect.value = state.model;
+  if (dom.modelSelect) {
+    dom.modelSelect.value = state.model;
+    dom.modelSelect.addEventListener("change", () => {
+      if (dom.customModelGroup) {
+        dom.customModelGroup.style.display = dom.modelSelect.value === "custom" ? "block" : "none";
+      }
+    });
+  }
   
   updateApiStatus();
   applyTheme();
@@ -3627,7 +3634,18 @@ async function loadGlobalSettings() {
       if (settings.openaiApiKey && dom.openaiKeyInput) dom.openaiKeyInput.value = settings.openaiApiKey;
       if (settings.model) {
         state.model = settings.model;
-        if (dom.modelSelect) dom.modelSelect.value = settings.model;
+        localStorage.setItem("af-model", settings.model);
+        if (dom.modelSelect) {
+          const hasOption = Array.from(dom.modelSelect.options).some(o => o.value === settings.model);
+          if (hasOption) {
+            dom.modelSelect.value = settings.model;
+            if (dom.customModelGroup) dom.customModelGroup.style.display = "none";
+          } else {
+            dom.modelSelect.value = "custom";
+            if (dom.customModelInput) dom.customModelInput.value = settings.model;
+            if (dom.customModelGroup) dom.customModelGroup.style.display = "block";
+          }
+        }
       }
       if (settings.wpUrl && dom.wpSiteUrlInput) dom.wpSiteUrlInput.value = settings.wpUrl;
       if (settings.wpUsername && dom.wpUsernameInput) dom.wpUsernameInput.value = settings.wpUsername;
@@ -3749,7 +3767,10 @@ async function saveSettings() {
 
   const apiKey = dom.apiKeyInput ? dom.apiKeyInput.value.trim() : "";
   const openaiApiKey = dom.openaiKeyInput ? dom.openaiKeyInput.value.trim() : "";
-  const model = dom.modelSelect ? dom.modelSelect.value : "gemini-3.5-flash";
+  let model = dom.modelSelect ? dom.modelSelect.value : "gemini-3.5-flash";
+  if (model === "custom" && dom.customModelInput && dom.customModelInput.value.trim()) {
+    model = dom.customModelInput.value.trim();
+  }
   const wpUrl = dom.wpSiteUrlInput ? dom.wpSiteUrlInput.value.trim() : "";
   const wpUsername = dom.wpUsernameInput ? dom.wpUsernameInput.value.trim() : "";
   const wpAppPassword = dom.wpAppPasswordInput ? dom.wpAppPasswordInput.value.trim() : "";
@@ -3774,6 +3795,7 @@ async function saveSettings() {
     if (res.ok) {
       const data = await res.json();
       state.model = model;
+      localStorage.setItem("af-model", model);
       const wpV = data.wpVerification;
       if (wpV) {
         if (wpV.success && wpV.authenticated) {

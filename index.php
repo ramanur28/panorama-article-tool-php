@@ -1170,6 +1170,79 @@ try {
     </div>
   </div>
 
+  <!-- ═══ Update Published Article Modal ═══ -->
+  <div class="modal-overlay" id="updatePublishedModal">
+    <div class="modal modal-md" style="max-width: 550px;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-subtle);">
+        <h2 style="display: flex; align-items: center; gap: 0.5rem; color: var(--accent-start, #6366f1); font-size: 1.15rem; margin: 0;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Update Artikel yang Telah Dipublish
+        </h2>
+        <button class="modal-close" id="closeUpdatePublishedModal" aria-label="Close update confirmation">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 1.25rem;">
+        <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 1rem; line-height: 1.5;">
+          Sistem mendeteksi bahwa artikel ini <strong>sudah pernah dipublish di WordPress</strong> (status telah dibuat). Anda dapat mengganti seluruh isi artikel yang telah tayang dengan hasil generate terbaru ini.
+        </p>
+
+        <!-- Matched Article Details Card -->
+        <div style="background: var(--bg-surface, rgba(255, 255, 255, 0.04)); border: 1px solid var(--border-default, rgba(255, 255, 255, 0.1)); border-radius: var(--radius-sm, 8px); padding: 1rem; margin-bottom: 1rem;">
+          <div style="margin-bottom: 0.6rem;">
+            <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">Judul Artikel</span>
+            <div id="upPubModalTitle" style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin-top: 0.15rem; word-break: break-word;">-</div>
+          </div>
+          <div style="display: flex; gap: 1rem; margin-bottom: 0.6rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px;">
+              <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">Focus Keyword</span>
+              <div id="upPubModalKeyphrase" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.15rem;">-</div>
+            </div>
+            <div style="flex: 1; min-width: 140px;">
+              <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">Status Saat Ini</span>
+              <div style="margin-top: 0.15rem;"><span class="badge badge-success" style="font-size: 0.75rem;">✅ Telah Dibuat</span></div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 1rem; margin-bottom: 0.6rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px;">
+              <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">Konten Baru</span>
+              <div id="upPubModalStats" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.15rem;">-</div>
+            </div>
+            <div style="flex: 1; min-width: 140px;">
+              <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">Target Post WP</span>
+              <div id="upPubModalPostId" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.15rem;">-</div>
+            </div>
+          </div>
+          <div>
+            <span style="font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px;">URL Postingan WordPress</span>
+            <div style="margin-top: 0.15rem; word-break: break-all;">
+              <a id="upPubModalLink" href="#" target="_blank" style="color: var(--accent-text, #818cf8); font-size: 0.82rem; text-decoration: underline; display: inline-flex; align-items: center; gap: 0.35rem;">
+                <span id="upPubModalLinkText">-</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Warning Callout -->
+        <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: var(--radius-sm, 8px); padding: 0.75rem 0.9rem;">
+          <p style="font-size: 0.8rem; color: var(--warning, #f59e0b); margin: 0; line-height: 1.45;">
+            ⚠️ <strong>Perhatian:</strong> Seluruh isi konten lama di WordPress dan database lokal akan ditimpa dengan konten hasil generate terbaru. Tag, excerpt, gambar, dan metadata SEO (Yoast / RankMath) akan diperbarui otomatis tanpa mengubah URL permanen.
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.6rem; padding: 0.85rem 1.25rem; border-top: 1px solid var(--border-subtle);">
+        <button type="button" class="btn btn-secondary" id="btnCancelUpdatePublished">Batal</button>
+        <button type="button" class="btn btn-primary btn-update-published" id="btnConfirmUpdatePublished" style="font-weight: 600; display: inline-flex; align-items: center; gap: 0.4rem;">
+          <span id="btnConfirmUpdateIcon">🔄</span>
+          <span id="btnConfirmUpdateText">Ya, Update Artikel Sekarang</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   </div> <!-- /#appContainer -->
 
   <!-- ═══ Toast Container ═══ -->

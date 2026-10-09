@@ -37,23 +37,33 @@ try {
     $images = $input['images'] ?? [];
     $wpCredentials = $input['wpCredentials'] ?? null;
 
-    // Find article record in database if articleId or title passed
+    // Find article record in database if articleId, title, or keyphrase passed
     $existingArticle = null;
     if ($articleId) {
         $stmt = $pdo->prepare("SELECT * FROM articles WHERE id = ?");
         $stmt->execute([$articleId]);
         $existingArticle = $stmt->fetch();
     }
+    // High-precision matching: Same title AND keyphrase
+    if (!$existingArticle && !empty($title) && !empty($keyphrase)) {
+        $stmt = $pdo->prepare("SELECT * FROM articles WHERE LOWER(TRIM(title)) = LOWER(TRIM(?)) AND LOWER(TRIM(keyphrase)) = LOWER(TRIM(?)) LIMIT 1");
+        $stmt->execute([$title, $keyphrase]);
+        $existingArticle = $stmt->fetch();
+    }
     if (!$existingArticle && !empty($title)) {
-        $stmt = $pdo->prepare("SELECT * FROM articles WHERE LOWER(title) = LOWER(?) LIMIT 1");
+        $stmt = $pdo->prepare("SELECT * FROM articles WHERE LOWER(TRIM(title)) = LOWER(TRIM(?)) LIMIT 1");
         $stmt->execute([$title]);
         $existingArticle = $stmt->fetch();
     }
     if (!$existingArticle && !empty($keyphrase)) {
-        $stmt = $pdo->prepare("SELECT * FROM articles WHERE LOWER(keyphrase) = LOWER(?) LIMIT 1");
+        $stmt = $pdo->prepare("SELECT * FROM articles WHERE LOWER(TRIM(keyphrase)) = LOWER(TRIM(?)) LIMIT 1");
         $stmt->execute([$keyphrase]);
         $existingArticle = $stmt->fetch();
     }
+
+    // Resolve target wp_post_id and target link for update
+    $targetWpPostId = $input['wpPostId'] ?? ($existingArticle['wp_post_id'] ?? null);
+    $targetLink = $input['link'] ?? ($existingArticle['link'] ?? null);
 
     // Resolve content and images if not passed directly
     if (empty($content) && $existingArticle && !empty($existingArticle['article_content'])) {
@@ -63,11 +73,13 @@ try {
         $images = json_decode($existingArticle['images_json'], true) ?: [];
     }
 
-    // Post to WordPress
+    // Post or Update WordPress
     $wpResult = WordPressService::postToWordPress([
         'url' => $wpCredentials['url'] ?? null,
         'username' => $wpCredentials['username'] ?? null,
         'password' => $wpCredentials['password'] ?? null,
+        'wpPostId' => $targetWpPostId,
+        'link' => $targetLink,
         'title' => $title ?: ($existingArticle['title'] ?? 'New Article'),
         'content' => $content,
         'action' => $action,
@@ -75,13 +87,13 @@ try {
         'images' => $images
     ]);
 
-    $wpLink = $wpResult['wpPost']['link'] ?? '';
-    $wpPostId = $wpResult['wpPost']['id'] ?? null;
-    $newStatus = ($action === 'publish') ? 'telah_dibuat' : 'dijadwalkan';
-    $schedDate = ($action === 'publish') ? null : $rawDate;
-    $pubDate = ($action === 'publish') ? $rawDate : null;
+    $wpLink = $wpResult['wpPost']['link'] ?? ($targetLink ?: '');
+    $wpPostId = $wpResult['wpPost']['id'] ?? $targetWpPostId;
+    $newStatus = ($action === 'publish' || $action === 'update') ? 'telah_dibuat' : 'dijadwalkan';
+    $schedDate = ($action === 'schedule') ? $rawDate : null;
+    $pubDate = ($action === 'schedule') ? null : ($existingArticle['published_date'] ?? $rawDate);
 
-    // Update existing article in MySQL
+    // Update existing article in MySQL - replace entire content with new generated content
     if ($existingArticle) {
         $up = $pdo->prepare("UPDATE articles SET 
             status = ?, 
@@ -89,9 +101,11 @@ try {
             scheduled_date = ?, 
             published_date = ?, 
             wp_post_id = COALESCE(?, wp_post_id),
-            article_content = COALESCE(NULLIF(?, ''), article_content)
+            article_content = ?,
+            images_json = COALESCE(?, images_json),
+            updated_at = NOW()
             WHERE id = ?");
-        $up->execute([$newStatus, $wpLink, $schedDate, $pubDate, $wpPostId, $content, $existingArticle['id']]);
+        $up->execute([$newStatus, $wpLink, $schedDate, $pubDate, $wpPostId, $content, !empty($images) ? json_encode($images) : null, $existingArticle['id']]);
         $artId = $existingArticle['id'];
     } else {
         // Insert new article record
@@ -112,14 +126,20 @@ try {
     }
 
     // Dynamically update generation queue status to match article status (telah_dibuat or dijadwalkan)
-    $qUp = $pdo->prepare("UPDATE generation_queue SET status = ?, updated_at = NOW() 
+    $qMsg = ($action === 'update') ? 'Artikel telah diperbarui di WordPress & database' : (($action === 'publish') ? 'Published to WordPress' : 'Scheduled in WordPress');
+    $qUp = $pdo->prepare("UPDATE generation_queue SET 
+        status = ?, 
+        article_content = ?, 
+        progress = 100, 
+        progress_message = ?, 
+        updated_at = NOW() 
         WHERE id = ? 
            OR id = ? 
            OR id = ?
            OR JSON_UNQUOTE(JSON_EXTRACT(input_params, '$.managerId')) = ?
            OR JSON_UNQUOTE(JSON_EXTRACT(input_params, '$.managerId')) = ?
-           OR LOWER(TRIM(title)) = LOWER(?)");
-    $qUp->execute([$newStatus, (string)$queueId, (string)$articleId, (string)$artId, (string)$articleId, (string)$artId, trim($title)]);
+           OR (LOWER(TRIM(title)) = LOWER(?) AND LOWER(TRIM(keyphrase)) = LOWER(?))");
+    $qUp->execute([$newStatus, $content, $qMsg, (string)$queueId, (string)$articleId, (string)$artId, (string)$articleId, (string)$artId, trim($title), trim($keyphrase)]);
 
     $isSuccess = !empty($wpResult['success']);
     if (!$isSuccess) {
@@ -128,9 +148,13 @@ try {
 
     echo json_encode([
         'success' => $isSuccess,
+        'isUpdated' => ($action === 'update' || !empty($wpResult['isUpdated'])),
         'wpSynced' => $isSuccess,
         'wpLink' => $wpLink,
         'wpPostId' => $wpPostId,
+        'message' => ($action === 'update') 
+            ? "Seluruh isi artikel yang telah dipublish berhasil diganti dengan konten baru!" 
+            : (($action === 'publish') ? "Artikel berhasil dipublish ke WordPress!" : "Artikel berhasil dijadwalkan di WordPress!"),
         'error' => $wpResult['error'] ?? null,
         'wpError' => $wpResult['error'] ?? null,
         'item' => [
@@ -139,7 +163,8 @@ try {
             'status' => $newStatus,
             'scheduledDate' => $schedDate,
             'publishedDate' => $pubDate,
-            'link' => $wpLink
+            'link' => $wpLink,
+            'wpPostId' => $wpPostId
         ]
     ]);
 } catch (Throwable $e) {

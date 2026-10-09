@@ -206,16 +206,49 @@ class WordPressService {
 
         $htmlContent = MarkdownHelper::toWordPressHtml($content, $imageMap);
 
-        $postStatus = ($action === 'publish') ? 'publish' : 'future';
+        $postId = !empty($params['wpPostId']) ? (int)$params['wpPostId'] : (!empty($params['postId']) ? (int)$params['postId'] : null);
+        $isUpdateAction = ($action === 'update') || !empty($postId);
+
+        // Fallback: If update action but postId missing, attempt to resolve via slug from link or title
+        if ($isUpdateAction && !$postId) {
+            if (!empty($params['link'])) {
+                $parsedPath = trim(parse_url($params['link'], PHP_URL_PATH), '/');
+                $parts = explode('/', $parsedPath);
+                $slugCandidate = end($parts);
+                if (!empty($slugCandidate)) {
+                    $slugCh = curl_init("{$wpUrl}/wp-json/wp/v2/posts?slug=" . urlencode($slugCandidate));
+                    curl_setopt_array($slugCh, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_HTTPHEADER => [$authHeader, 'Accept: application/json'],
+                        CURLOPT_TIMEOUT => 15,
+                        CURLOPT_SSL_VERIFYPEER => true
+                    ]);
+                    $slugRes = curl_exec($slugCh);
+                    if (PHP_VERSION_ID < 80000) { @curl_close($slugCh); }
+                    $slugJson = json_decode($slugRes, true);
+                    if (!empty($slugJson[0]['id'])) {
+                        $postId = (int)$slugJson[0]['id'];
+                    }
+                }
+            }
+        }
+
+        $postStatus = ($action === 'publish' || $action === 'update') ? 'publish' : 'future';
         $formattedDate = date('Y-m-d\TH:i:s', strtotime($date));
 
         $postData = [
             'title' => $title,
             'content' => $htmlContent,
             'status' => $postStatus,
-            'date' => $formattedDate,
             'meta' => []
         ];
+
+        // For updates, preserve original published date unless explicitly requested
+        if (!$postId && !empty($date)) {
+            $postData['date'] = $formattedDate;
+        } elseif ($action !== 'update' && !empty($date)) {
+            $postData['date'] = $formattedDate;
+        }
 
         if ($featuredMediaId) {
             $postData['featured_media'] = $featuredMediaId;
@@ -253,7 +286,8 @@ class WordPressService {
             }
         }
 
-        $ch = curl_init("{$wpUrl}/wp-json/wp/v2/posts");
+        $endpoint = ($postId) ? "{$wpUrl}/wp-json/wp/v2/posts/{$postId}" : "{$wpUrl}/wp-json/wp/v2/posts";
+        $ch = curl_init($endpoint);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
@@ -279,9 +313,10 @@ class WordPressService {
         if ($code >= 200 && $code < 300 && !empty($json['id'])) {
             return [
                 'success' => true,
+                'isUpdated' => !empty($postId),
                 'wpPost' => [
                     'id' => $json['id'],
-                    'link' => $json['link'] ?? '',
+                    'link' => $json['link'] ?? ($params['link'] ?? ''),
                     'status' => $json['status'] ?? $postStatus
                 ]
             ];

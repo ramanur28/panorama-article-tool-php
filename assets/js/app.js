@@ -363,6 +363,12 @@ function initDom() {
   dom.publishingProgressSubtitle = $("#publishingProgressSubtitle");
   dom.publishingProgressBar = $("#publishingProgressBar");
 
+  // Update Published Modal
+  dom.updatePublishedModal = $("#updatePublishedModal");
+  dom.closeUpdatePublishedModal = $("#closeUpdatePublishedModal");
+  dom.btnCancelUpdatePublished = $("#btnCancelUpdatePublished");
+  dom.btnConfirmUpdatePublished = $("#btnConfirmUpdatePublished");
+
   // Day Details Modal
   dom.dayDetailsModal = $("#dayDetailsModal");
   dom.dayDetailsModalTitle = $("#dayDetailsModalTitle");
@@ -944,6 +950,16 @@ function init() {
   if (dom.btnCancelScheduleModal) dom.btnCancelScheduleModal.addEventListener("click", closeScheduleModal);
   if (dom.btnSaveScheduleModal) dom.btnSaveScheduleModal.addEventListener("click", saveScheduleModal);
 
+  // Update Published Modal Event Handlers
+  if (dom.closeUpdatePublishedModal) dom.closeUpdatePublishedModal.addEventListener("click", closeUpdatePublishedModal);
+  if (dom.btnCancelUpdatePublished) dom.btnCancelUpdatePublished.addEventListener("click", closeUpdatePublishedModal);
+  if (dom.btnConfirmUpdatePublished) dom.btnConfirmUpdatePublished.addEventListener("click", executeUpdatePublished);
+  if (dom.updatePublishedModal) {
+    dom.updatePublishedModal.addEventListener("click", (e) => {
+      if (e.target === dom.updatePublishedModal) closeUpdatePublishedModal();
+    });
+  }
+
   if (dom.closeDayDetailsModal) dom.closeDayDetailsModal.addEventListener("click", closeDayDetailsModal);
   if (dom.btnCloseDayDetails) dom.btnCloseDayDetails.addEventListener("click", closeDayDetailsModal);
 
@@ -1473,6 +1489,61 @@ function populateInsertLinkTargetSelect() {
   }
 }
 
+function findPublishedMatchForQueueItem(queueItem) {
+  if (!queueItem) return null;
+  const articlesList = state.articles || [];
+
+  const qTitle = (queueItem.title || "").trim().toLowerCase();
+  const qKeyphrase = (queueItem.keyphrase || "").trim().toLowerCase();
+  const qManagerId = queueItem.managerId ? String(queueItem.managerId) : null;
+
+  // 1. By managerId where status is telah_dibuat (or has wp_post_id)
+  if (qManagerId && articlesList.length > 0) {
+    const byId = articlesList.find(a => String(a.id) === qManagerId && (a.status === "telah_dibuat" || a.wp_post_id));
+    if (byId) return byId;
+  }
+
+  // 2. Exact match by Title AND Keyphrase where status is telah_dibuat
+  if (qTitle && qKeyphrase && articlesList.length > 0) {
+    const byBoth = articlesList.find(a => 
+      (a.status === "telah_dibuat" || a.status === "published") &&
+      (a.title || "").trim().toLowerCase() === qTitle &&
+      (a.keyphrase || "").trim().toLowerCase() === qKeyphrase
+    );
+    if (byBoth) return byBoth;
+  }
+
+  // 3. Match by Title where status is telah_dibuat
+  if (qTitle && articlesList.length > 0) {
+    const byTitle = articlesList.find(a => 
+      (a.status === "telah_dibuat" || a.status === "published") &&
+      (a.title || "").trim().toLowerCase() === qTitle
+    );
+    if (byTitle) return byTitle;
+  }
+
+  // 4. Fallback: if queue item itself has status telah_dibuat or has wpPostId/link
+  if (queueItem.status === "telah_dibuat" || queueItem.wpPostId) {
+    if (articlesList.length > 0) {
+      const match = articlesList.find(a => 
+        String(a.id) === String(queueItem.managerId || queueItem.id) ||
+        (qTitle && (a.title || "").trim().toLowerCase() === qTitle)
+      );
+      if (match) return match;
+    }
+    return {
+      id: queueItem.managerId || queueItem.id,
+      title: queueItem.title,
+      keyphrase: queueItem.keyphrase,
+      status: "telah_dibuat",
+      link: queueItem.link || "",
+      wp_post_id: queueItem.wpPostId || null
+    };
+  }
+
+  return null;
+}
+
 function renderQueue() {
   if (dom.queueCount) dom.queueCount.textContent = state.queue.length;
   populateInsertLinkTargetSelect();
@@ -1553,19 +1624,37 @@ function renderQueue() {
       statusLabel = "❌ Error";
     }
 
-    // Action buttons for queue list items: Regenerate, Publish, Schedule, Remove (Admin only), View Post Link
+    // Dynamic check: Apakah artikel ini telah dipublish di WordPress (status telah dibuat)?
+    const publishedMatch = findPublishedMatchForQueueItem(item);
+    const isPublished = Boolean(publishedMatch);
+
+    const publishedBadge = isPublished 
+      ? `<span class="badge badge-published" style="font-size:0.65rem; margin-left:4px;" title="Terhubung dengan artikel yang sudah dipublish">🌐 Terbit</span>` 
+      : "";
+
+    // Action buttons for queue list items
     const qIdStr = escapeHtml(String(item.id));
     const regenBtn = item.status !== "generating" ? `<button class="btn btn-xs btn-secondary" onclick="event.stopPropagation(); window.__regenerateQueueItem('${qIdStr}')" title="Regenerate this article">🔄 Regenerate</button>` : "";
-    const pubBtn = isDone ? `<button class="btn btn-xs btn-success" onclick="event.stopPropagation(); window.__publishQueueItem('${qIdStr}')" title="${item.status === 'telah_dibuat' ? 'Re-publish / Update WordPress' : 'Publish directly to WordPress'}">🚀 Publish</button>` : "";
+    
+    // Fitur Baru: Jika artikel telah dipublish dan memiliki konten baru, tampilkan tombol Update Artikel yang menonjol
+    let updatePubBtn = "";
+    let pubBtn = "";
+    if (hasArticle && isPublished && item.status !== "generating") {
+      updatePubBtn = `<button class="btn btn-xs btn-primary btn-update-published" onclick="event.stopPropagation(); window.__updatePublishedArticle('${qIdStr}')" title="Artikel ini telah dipublish di WordPress (status telah dibuat). Klik untuk mengganti seluruh isi artikel yang telah dipublish dengan konten baru ini.">🔄 Update Artikel</button>`;
+    } else if (isDone && !isPublished) {
+      pubBtn = `<button class="btn btn-xs btn-success" onclick="event.stopPropagation(); window.__publishQueueItem('${qIdStr}')" title="Publish directly to WordPress">🚀 Publish</button>`;
+    }
+
     const schBtn = isDone ? `<button class="btn btn-xs btn-warning" onclick="event.stopPropagation(); window.__scheduleQueueItem('${qIdStr}')" title="${item.status === 'dijadwalkan' ? 'Reschedule publication date' : 'Schedule WordPress publication'}">📅 Schedule</button>` : "";
-    const viewBtn = item.link ? `<a href="${item.link}" target="_blank" class="btn btn-xs btn-outline-success" onclick="event.stopPropagation()" title="View published post on WordPress">🌐 Post</a>` : "";
+    const postLink = (publishedMatch && publishedMatch.link) ? publishedMatch.link : (item.link || "");
+    const viewBtn = postLink ? `<a href="${escapeHtml(postLink)}" target="_blank" class="btn btn-xs btn-outline-success" onclick="event.stopPropagation()" title="Lihat postingan di WordPress">🌐 Post</a>` : "";
     const removeQueueBtn = (state.isAdmin && item.status !== "generating") ? `<button class="btn btn-xs btn-ghost text-danger" onclick="event.stopPropagation(); window.__confirmRemoveFromQueue('${qIdStr}')" title="Remove item from queue (Admin only)">🗑️ Remove</button>` : "";
 
     const dateMeta = item.scheduledDate ? `<span>📅 ${escapeHtml(item.scheduledDate.substring(0, 10))}</span>` : (item.publishedDate ? `<span>✅ ${escapeHtml(item.publishedDate.substring(0, 10))}</span>` : "");
 
     el.innerHTML = `
       <div class="queue-item-header">
-        <span class="queue-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}${featBadge}</span>
+        <span class="queue-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}${featBadge}${publishedBadge}</span>
         <span class="queue-item-status status-${item.status}">${statusLabel}</span>
       </div>
       <div class="queue-item-meta">
@@ -1586,8 +1675,9 @@ function renderQueue() {
       ` : ""}
       ${isErr ? `<div class="queue-item-error">❌ ${escapeHtml(item.error)}</div>` : ""}
       <div class="queue-item-actions">
-        ${regenBtn}
+        ${updatePubBtn}
         ${pubBtn}
+        ${regenBtn}
         ${schBtn}
         ${viewBtn}
         ${removeQueueBtn}
@@ -2628,6 +2718,7 @@ async function loadArticles() {
     if (res.ok) {
       state.articles = await res.json();
       renderArticles();
+      renderQueue();
     }
   } catch (err) {
     console.error("Failed to load articles:", err);
@@ -3293,14 +3384,22 @@ function showPublishingProgressModal(action = "publish", titleText = "") {
   if (!dom.publishingProgressSubtitle) dom.publishingProgressSubtitle = $("#publishingProgressSubtitle");
   
   if (dom.publishingProgressTitle) {
-    dom.publishingProgressTitle.textContent = action === "publish"
-      ? `🚀 Publishing "${titleText || 'Article'}" to WordPress...`
-      : `📅 Scheduling "${titleText || 'Article'}" for upload...`;
+    if (action === "update") {
+      dom.publishingProgressTitle.textContent = `🔄 Memperbarui "${titleText || 'Artikel'}" di WordPress...`;
+    } else {
+      dom.publishingProgressTitle.textContent = action === "publish"
+        ? `🚀 Publishing "${titleText || 'Article'}" to WordPress...`
+        : `📅 Scheduling "${titleText || 'Article'}" for upload...`;
+    }
   }
   if (dom.publishingProgressSubtitle) {
-    dom.publishingProgressSubtitle.textContent = action === "publish"
-      ? "Uploading image media with SEO metadata & syncing article body with WordPress..."
-      : "Setting schedule date & syncing status with WordPress...";
+    if (action === "update") {
+      dom.publishingProgressSubtitle.textContent = "Mengganti seluruh konten artikel yang telah dipublish & memperbarui SEO...";
+    } else {
+      dom.publishingProgressSubtitle.textContent = action === "publish"
+        ? "Uploading image media with SEO metadata & syncing article body with WordPress..."
+        : "Setting schedule date & syncing status with WordPress...";
+    }
   }
   if (dom.publishingProgressModal) {
     dom.publishingProgressModal.classList.add("active");
@@ -3449,6 +3548,129 @@ function scheduleQueueItem(id) {
 function publishQueueItem(id) {
   const item = state.queue.find(q => String(q.id) === String(id));
   openScheduleModal({ queueId: id, title: item ? item.title : "", action: "publish" });
+}
+
+// ── Update Published Article Handlers ─────────────────────────────
+function openUpdatePublishedModal(queueId) {
+  const item = state.queue.find(q => String(q.id) === String(queueId));
+  if (!item) {
+    showToast("Artikel tidak ditemukan di antrean.", "error");
+    return;
+  }
+
+  const publishedMatch = findPublishedMatchForQueueItem(item);
+  state.targetUpdatePublishedQueueId = queueId;
+  state.targetUpdatePublishedItem = item;
+  state.targetUpdatePublishedArticle = publishedMatch;
+
+  const titleEl = document.getElementById("upPubModalTitle");
+  const kpEl = document.getElementById("upPubModalKeyphrase");
+  const statsEl = document.getElementById("upPubModalStats");
+  const postIdEl = document.getElementById("upPubModalPostId");
+  const linkEl = document.getElementById("upPubModalLink");
+  const linkTextEl = document.getElementById("upPubModalLinkText");
+
+  const wordCnt = countWords(item.article || "");
+  const imgs = item.images || item.articleImages || [];
+
+  if (titleEl) titleEl.textContent = item.title || (publishedMatch ? publishedMatch.title : "-");
+  if (kpEl) kpEl.textContent = item.keyphrase || (publishedMatch ? publishedMatch.keyphrase : "-");
+  if (statsEl) statsEl.textContent = `📝 ${wordCnt} kata, 🖼️ ${imgs.length} gambar`;
+  
+  const wpPostId = (publishedMatch && publishedMatch.wp_post_id) ? publishedMatch.wp_post_id : (item.wpPostId || null);
+  if (postIdEl) postIdEl.textContent = wpPostId ? `#${wpPostId}` : "Otomatis (Sesuai Slug/Link)";
+
+  const targetLink = (publishedMatch && publishedMatch.link) ? publishedMatch.link : (item.link || "");
+  if (linkEl && linkTextEl) {
+    if (targetLink) {
+      linkEl.href = targetLink;
+      linkTextEl.textContent = targetLink;
+      linkEl.style.display = "inline-flex";
+    } else {
+      linkEl.href = "#";
+      linkTextEl.textContent = "URL belum tersedia (akan dicocokkan otomatis)";
+    }
+  }
+
+  if (dom.updatePublishedModal) dom.updatePublishedModal.classList.add("active");
+}
+
+function closeUpdatePublishedModal() {
+  if (dom.updatePublishedModal) dom.updatePublishedModal.classList.remove("active");
+  state.targetUpdatePublishedQueueId = null;
+  state.targetUpdatePublishedItem = null;
+  state.targetUpdatePublishedArticle = null;
+}
+
+async function executeUpdatePublished() {
+  const item = state.targetUpdatePublishedItem;
+  const publishedMatch = state.targetUpdatePublishedArticle;
+
+  if (!item) {
+    showToast("Tidak ada artikel target untuk diperbarui.", "error");
+    closeUpdatePublishedModal();
+    return;
+  }
+
+  const articleContent = item.article || item.content || "";
+  if (!articleContent || !articleContent.trim()) {
+    showToast("Konten artikel baru masih kosong. Silakan generate artikel terlebih dahulu.", "error");
+    return;
+  }
+
+  const confirmBtn = document.getElementById("btnConfirmUpdatePublished");
+  const confirmText = document.getElementById("btnConfirmUpdateText");
+  const confirmIcon = document.getElementById("btnConfirmUpdateIcon");
+
+  if (confirmBtn) confirmBtn.disabled = true;
+  if (confirmText) confirmText.textContent = "Memperbarui di WordPress...";
+  if (confirmIcon) confirmIcon.textContent = "⏳";
+
+  showPublishingProgressModal("update", item.title || item.keyphrase);
+
+  try {
+    const imagesList = item.images || item.articleImages || [];
+    const wpPostId = (publishedMatch && publishedMatch.wp_post_id) ? publishedMatch.wp_post_id : (item.wpPostId || null);
+    const targetLink = (publishedMatch && publishedMatch.link) ? publishedMatch.link : (item.link || null);
+
+    const res = await authFetch(apiPath("/api/articles/schedule-publish"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        articleId: publishedMatch ? publishedMatch.id : (item.managerId || item.id),
+        queueId: item.id,
+        title: item.title || item.keyphrase,
+        keyphrase: item.keyphrase || item.title,
+        action: "update",
+        content: articleContent,
+        images: imagesList,
+        wpPostId: wpPostId,
+        link: targetLink
+      })
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`Artikel "${item.title}" yang telah dipublish berhasil diperbarui di WordPress dan database!`, "success");
+      closeUpdatePublishedModal();
+      await loadQueue(true);
+      if (typeof loadArticles === "function") await loadArticles();
+      if (typeof renderCalendar === "function") renderCalendar();
+      renderQueue();
+      if (String(state.activeItemId) === String(item.id)) {
+        renderPreview();
+      }
+    } else {
+      showToast(`Gagal memperbarui artikel: ${data.wpError || data.error || "Server error"}`, "error");
+    }
+  } catch (err) {
+    showToast(`Error memperbarui artikel: ${err.message}`, "error");
+  } finally {
+    hidePublishingProgressModal();
+    if (confirmBtn) confirmBtn.disabled = false;
+    if (confirmText) confirmText.textContent = "Ya, Update Artikel Sekarang";
+    if (confirmIcon) confirmIcon.textContent = "🔄";
+  }
 }
 
 function editQueueItem(id) {
@@ -4054,6 +4276,7 @@ window.__regenerate = async (id) => {
   }
 };
 window.__publishQueueItem = (id) => publishQueueItem(id);
+window.__updatePublishedArticle = (id) => openUpdatePublishedModal(id);
 window.__scheduleQueueItem = (id) => scheduleQueueItem(id);
 window.__editQueueItem = (id) => editQueueItem(id);
 window.__autoInsertComposeLinks = () => autoInsertFormInternalLinks(true);

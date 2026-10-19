@@ -340,6 +340,7 @@ try {
             <option value="gemini-3.5-pro">Gemini 3.5 Pro (Quality)</option>
             <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
             <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+            <option value="gpt-6-luna">GPT-6 Luna</option>
             <option value="custom">Other / Custom Model ID...</option>
           </select>
         </div>

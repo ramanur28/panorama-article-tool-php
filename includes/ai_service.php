@@ -173,7 +173,7 @@ class AIService {
             ]
         ];
 
-        $isReasoning = strpos($model, 'o1') === 0 || strpos($model, 'o3') === 0 || strpos($model, 'gpt-5') === 0;
+        $isReasoning = strpos($model, 'o1') === 0 || strpos($model, 'o3') === 0 || strpos($model, 'gpt-5') === 0 || strpos($model, 'gpt-6') === 0;
         if (!$isReasoning) {
             $reqBody['temperature'] = 0.7;
         }
